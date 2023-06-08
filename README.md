@@ -8,7 +8,6 @@
 - 처음 h2 접속할때는 로컬에 db파일이 생성이 안되어있기때문에, 처음에는 jdbc:h2:~/datajpa 로 접근하는거야. 이러면 해당 이름으로 로컬에 파일을 생성하면서 파일로 접속을 하게 됨.
 - 그 다음부터는 원격으로 jdbc:h2:tcp://localhost/~/datajpa 으로 접속하는거임. 파일로 접근하게 되면 파일에 락이 걸려서 여러곳에서 동시에 접속이 안됨.
 
-
 #### 스프링 데이터 JPA와 DB 설정, 동작확인
 - application.yml 에서 몇가지 설정 옵션
   - show_sql : true - 콘솔창에 sql 나오게 함 (비추)
@@ -29,6 +28,7 @@
 - public class MemberRepository extends JpaRepository<Member, Long> {}
 - @Repository 애노테이션 안붙여도 됨.
 - Spring data JPA가 알아서 구현체 만들어서 주입해줌
+
 
 ### 쿼리 메소드 기능
 #### 메소드 이름으로 쿼리 생성
@@ -57,12 +57,65 @@
   - List\<MemberDto> findMemberDto();
   - 잘 안써... QueryDsl 사용하면 쉽게 하는 방법 있대. 이거 뭐 패키지명까지 다 적어줘야하고 너무 지저분하잖아.
 
-
 #### 파라미터 바인딩
+- 컬렉션 파라미터 바인딩
+  - @Query("select m from Member m where m.username in :names")
+  - List\<Member> findByNames(@Param("names") List\<String> names)
+
 #### 반환 타입
+- Member, List\<Member>, Optional\<Member> 처럼 다양한 반환 타임 지원
+
 #### 순수 JPA 페이징과 정렬
+- 페이징 하는법 em.createQuery(.....).setFirstResult(offset).setMaxResults(limit).getResultList();
+- offset은 전체 결과에서 시작할 idx 지정. 0부터 시작
+- limit는 최대 개수.
+- offset : 1, limit : 3 이면 1,2,3 이 가져와 지고, offset:2, limit:3이면 2,3,4 가져와짐. 물론 limit보다 남은게 적으면 적은대로 가져와지고
+- 이거 jpa 강의에서 했던건데, 내가 이번 프로젝트에서 페이징 하는 일이 없어서 까먹네.
+
 #### 스프링 데이터 JPA 페이징과 정렬
+- Page\<Member> findByUsername(String name, Pageable pageable); //count 쿼리 사용
+- Slice\<Member> findByUsername(String name, Pageable pageable); //count 쿼리 사용 안 함. count 쿼리가 매우 무거운 편이기에, limit+1을 조회해서 다음 페이지 여부만 확인해두는거.
+- List\<Member> findByUsername(String name, Pageable pageable); //count 쿼리 사용 안 함
+- List\<Member> findByUsername(String name, Sort sort);
+- 사용 예
+  - PageRequest pageRequest = PageRequest.of(0, 3, Sort.by(Sort.Direction.DESC, "username")); // sort 안써도 됨
+  - Page\<Member> page = memberRepository.findByAge(10, pageRequest); // Pageable의 구현체가 PageRequest,
+  - List\<Member> content = page.getContent(); // 조회된 데이터 
+  - page.getTotalElements() // 전체 데이터 수 
+  - page.getNumber() // 페이지 번호 
+  - page.getTotalPages() // 전체 페이지 번호 
+  - page.isFirst()) // 첫번째 항목인가? 
+  - page.hasNext() // 다음 페이지가 있는가?
+- count 쿼리 분리하기. 
+  - count만 뽑아올때는 쿼리에 조인이 필요 없으니까, 분리해서 더 최적화 하는거. 실무에서 매우 중요!
+  - @Query(value = “select m from Member m”, countQuery = “select count(m.username) from Member m”)
+  - Page\<Member> findMemberAllCountBy(Pageable pageable);
+- 페이지를 유지하면서 엔티티를 DTO로 변환하기
+  - Page\<Member> page = memberRepository.findByAge(10, pageRequest);
+  - Page\<MemberDto> dtoPage = page.map(m -> new MemberDto());
 #### 벌크성 수정 쿼리
+- JPA를 사용한 벌크성 수정 쿼리
+```
+int resultCount = em.createQuery(
+            "update Member m set m.age = m.age + 1" +
+                    "where m.age >= :age")
+            .setParameter("age", age)
+            .executeUpdate();
+```
+  - 변경된 개수를 반환. getResultList() 이런거 아니고 executeUpdate()를 해줘야돼.
+- 스프링 데이터 JPA를 사용한 벌크성 수정 쿼리
+```
+@Modifying
+@Query("update Member m set m.age = m.age + 1 where m.age >= :age")
+int bulkAgePlus(@Param("age") int age);
+```
+- 벌크 수정 쿼리는 그냥 바로 db에 sql문 날려버림.
+- 벌크 수정 쿼리 날린 후에 em.clear()를 안하고 em.find()로 엔티티를 조회하면, db에 반영된 수정된 값이 조회되지 않고, 영속성컨텍스트 1차 쿼리에 있는 애의 값을 조회하게됨.
+- 때문에 벌크 수정 쿼리 날린 후에는 안전하게 바로 em.clear() 해주는게 좋아.
+- 이를 @Modifiying(clearAutomatically = true) 옵션 줄 수 있음
+- Q. 벌크 수정 쿼리 날린 후에, em.flush(); 해버리면, 벌커 수정 쿼리로 변경된 값이 영속성 콘텍스트 1차 캐시에 남아있는 데이터로 다시 변경되는거 아닌가??
+- A. 변경감지 프로세를를 생각해보면, 1차 캐시에 남아있는 데이터와, 스냅샷한 데이터의 변경이 없음. 때문에 변경감지로 인한 update sql문이 생성되지 않아! 때문에 em.flush()를 해도 아무런 일이 발생하지 않는거지.
+- 스냅샷은 엔티티를 persist하든 find하든 뭘하든 값을 처음 읽어온 최초의 시점에 데이터를 저장해주는거임.
 #### @EntityGraph
 #### JPA Hint & Lock
 
