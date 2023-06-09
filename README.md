@@ -63,7 +63,7 @@
   - List\<Member> findByNames(@Param("names") List\<String> names)
 
 #### 반환 타입
-- Member, List\<Member>, Optional\<Member> 처럼 다양한 반환 타임 지원
+- Member, List\<Member>, Optional\<Member> 처럼 다양한 반환 타입 지원
 
 #### 순수 JPA 페이징과 정렬
 - 페이징 하는법 em.createQuery(.....).setFirstResult(offset).setMaxResults(limit).getResultList();
@@ -93,6 +93,7 @@
 - 페이지를 유지하면서 엔티티를 DTO로 변환하기
   - Page\<Member> page = memberRepository.findByAge(10, pageRequest);
   - Page\<MemberDto> dtoPage = page.map(m -> new MemberDto());
+
 #### 벌크성 수정 쿼리
 - JPA를 사용한 벌크성 수정 쿼리
 ```
@@ -114,19 +115,142 @@ int bulkAgePlus(@Param("age") int age);
 - 때문에 벌크 수정 쿼리 날린 후에는 안전하게 바로 em.clear() 해주는게 좋아.
 - 이를 @Modifiying(clearAutomatically = true) 옵션 줄 수 있음
 - Q. 벌크 수정 쿼리 날린 후에, em.flush(); 해버리면, 벌커 수정 쿼리로 변경된 값이 영속성 콘텍스트 1차 캐시에 남아있는 데이터로 다시 변경되는거 아닌가??
-- A. 변경감지 프로세를를 생각해보면, 1차 캐시에 남아있는 데이터와, 스냅샷한 데이터의 변경이 없음. 때문에 변경감지로 인한 update sql문이 생성되지 않아! 때문에 em.flush()를 해도 아무런 일이 발생하지 않는거지.
+- A. 변경감지 프로세스를 생각해보면, 1차 캐시에 남아있는 데이터와, 스냅샷한 데이터의 변경이 없음. 때문에 변경감지로 인한 update sql문이 생성되지 않아! 때문에 em.flush()를 해도 아무런 일이 발생하지 않는거지.
 - 스냅샷은 엔티티를 persist하든 find하든 뭘하든 값을 처음 읽어온 최초의 시점에 데이터를 저장해주는거임.
+
 #### @EntityGraph
+- JPQL 페치 조인
+  - @Query("select m from Member m left join fetch m.team")
+  - List\<Member> findMemberFetchJoin();
+- EntityGraph
+```
+//공통 메서드 오버라이드
+@Override
+@EntityGraph(attributePaths = {"team"}) List<Member> findAll();
+//JPQL + 엔티티 그래프 @EntityGraph(attributePaths = {"team"}) @Query("select m from Member m") List<Member> findMemberEntityGraph();
+//메서드 이름으로 쿼리에서 특히 편리하다. @EntityGraph(attributePaths = {"team"}) List<Member> findByUsername(String username)
+```
+- 페치조인 할때 간단간단한건 EntityGraph 쓰고, 조금 복잡한건 JPQL @Query 쓰자
+
 #### JPA Hint & Lock
+- 쿼리 힌트
+  - @QueryHints(value = @QueryHint(name = "org.hibernate.readOnly", value = "true"))
+  - Member findReadOnlyByUsername(String username);
+  - 읽기전용으로만 엔티티를 조회할때 읽기모드임을 명시해줌. 읽기모드가 아니면 영속성컨텍스트 1차캐시에 스냅샷을 뜨는데 이것부터가 메모리를 잡아먹으니까 진짜 읽기만 할거다 싶으면 이렇게 최적화를 하는거지
+  - 그렇다고 뭐 읽기만 하는 메소드에 이걸 다~ 걸어서 최적화할 필요는 없고, 성능상 크게 트래픽을 잡아먹는애들 몇몇만 성능테스트를 해가면서 해놓는게 좋긴해
+  - 어차피, 진짜 성능을 더 최적으로 땡겨줘야 하는 상황이면 redis 같은 캐시를 앞에 깔기 때문에, 성능상 이점을 챙기기가 글쎄..
+- 락은 db에 락을 걸어두는건데, 너무 깊은 내용이라 거의 스킵
+
 
 ### 확장 기능
 #### 사용자 정의 리포지토리 구현
+- 나만의 메소드를 따로 정의해서 사용하고 싶을때, 사용자 정의 리포지토리를 따로 구현.
+- MemberRepositoryCustom 인터페이스 만들고 여기에 메소드 선언하고, 이를 구현하는 구현체 MemberRepositoryImpl에 해당 메소드를 구현
+- 처음에 JpaRepository 상속받은 MemberRepository 인터페이스가 MemberRepositoryCustom 얘를 또 상속 받게 해놓으면 끝
+- 보통 QueryDsl를 사용하여 코드를 작성하고 싶을떄 사용.
+- 인터페이스 이름은 규약이 없는데 이를 구현하는 구현체 이름 MemberRepositoryImpl에 이건 XxxxImpl 은 정해진거임. 
+- 정해진대로 해야 Spring Data Jpa가 이걸 잘 고려해서 구현체를 만들어서 심어줌.
+- 근데 꼭 이렇게 MemberRespository에 다 심어서 사용할 필요는 없고 그냥 MemberQueryRepository 이런식으로 클래스를 하나 정의해서 순수 JPA 사용하듯 사용하는것도 고려할 수 있지.
+- 핵심 로직이냐 view에 보내는 로직이냐 등등 고려해가면서 클래스를 분리하는거야.
+
 #### Auditing
+- 등록일, 수정일, 등록자, 수정자 같은 필드는 웬만한 테이블에 다 적용. 이때 상속이 아니라 공통 속성만 가져오는 기능이 @MappedSuperClass
+- 순수 JPA 사용
+```
+@MappedSuperclass
+@Getter
+public class JpaBaseEntity {
+    @Column(updatable = false)
+    private LocalDateTime createdDate;
+    private LocalDateTime updatedDate;
+    @PrePersist
+    public void prePersist() {
+        LocalDateTime now = LocalDateTime.now();
+        createdDate = now;
+        updatedDate = now;
+    }
+    @PreUpdate
+    public void preUpdate() {
+        updatedDate = LocalDateTime.now();
+    }
+}
+```
+- 지금 내 프로젝트에는 Member 객체 생성할때 따로 내가 LocalDatTime을 넣어줬는데,, 안그래도 되는거였네
+- 스프링 데이터 JPA 사용
+```
+@EntityListeners(AuditingEntityListener.class)
+@MappedSuperclass
+public class BaseEntity {
+    @CreatedDate
+    @Column(updatable = false)
+    private LocalDateTime createdDate;
+    @LastModifiedDate
+    private LocalDateTime lastModifiedDate;
+    
+    @CreatedBy
+    @Column(updatable = false)
+    private String createdBy;
+    @LastModifiedBy
+    private String lastModifiedBy;
+}
+```
+```
+@EnableJpaAuditing
+@SpringBootApplication
+public class DataJpaApplication {
+     public static void main(String[] args) {
+          SpringApplication.run(DataJpaApplication.class, args);
+      }
+     @Bean
+     public AuditorAware<String> auditorProvider() {
+          return () -> Optional.of(UUID.randomUUID().toString()); // 실무에서는 세션 정보나, 스프링 시큐리티 로그인 정보에서 ID를 받음
+     }
+}
+```
+- 생성일, 수정일은 거의 모든 테이블에 다 적용되는데, 생성자 수정자는 굳이 쓸 필요 없을때는 생성일, 수정일을 담은 클래스는 BaseTimeEntity라 하고, 이를 상속받는 BaseEntity에는 생성자, 수정자 필드를 넣어서
+- 필요에 따라 선별적으로 해당 클래스를 엔티티가 상속받으면 유연하게 대처할 수 있음.
+
 #### Web 확장 - 도메인 클래스 컨버터
+- 도메인 클래스 컨버터 적용전
+```
+@GetMapping("/members/{id}")
+public String findMember(@PathVariable("id") Long id) {
+    Member member = memberRepository.findById(id).get();
+    return member.getUsername();
+}
+```
+- 도메인 클래스 컨버터 적용 후
+```
+@GetMapping("/members/{id}")
+public String findMember(@PathVariable("id") Member member) {
+    return member.getUsername();
+}
+```
+- 트랜잭션이 적용되지 않는 상황이기에 딱 조회용으로만 좋고 여기서 member에다가 뭐를 수정하고 그럴때는 사용하면 고려해야될 예외상황들이 너무많음.
+- 웬만하면 그냥 쓰지마
+
 #### Web 확장 - 페이징과 정렬
+- 예제
+```
+@GetMapping("/members")
+public Page<Member> list(Pageable pageable) {
+    Page<Member> page = memberRepository.findAll(pageable);
+    return page;
+}
+```
+- /members?page=0&size=3&sort=id,desc&sort=username,desc 로 들어오는 요청을 pageable 파라미터로 받아서 적용됨
+- 서버 사이드쪽에서 페이지를 랜더링 하고 그 안에서 지지고볶고 하는 경우에는 엔티티를 그대로 반환해도 크게 상관없는데.
+- 특히 api 쪽에서는 엔티티를 그대로 노출해서는 절대 안된다.
+- 엔티티 필드 명이 바뀌면 스펙이 바뀌느것이기에 ssr 에서는 그냥 자기가 바꾼 필드명 view에서도 필드명 수정해주면 끝이지만, api로 작업하면 프론트쪽과의 협업에 있어서 큰 문제.
+- ssr 에서는 어쨌든 랜더링 까지 다 해서 랜더링한 결과만 보내는거니까 보안상 이슈도 별 문제 없지만, api는 보안상으로도 엔티티를 그냥 다 노출해버리니 문제가 될 수도.
+- 내 프로젝트에서 api 보낸것도 아니고 그냥 view에 보내는거니까 엔티티 그대로 보낸것들 냅두자.
 
 ### 스프링 데이터 JPA 분석
 #### 스프링 데이터 JPA 구현체 분석
+- @Transactional 적용
+  - 그냥 JPA에서는 적용이 안되어있기때문에 @Transactional 안붙여주면 에러 터지는데, 얘는 기본적으로 리포지토리 계층에 다 선언되어있음.
+  - 때문에 서비스 계층에 선언이 되어있으면 그걸 이어서 가고, 선언이 안되어있으면 리포지토리 계층에서 트랜잭션 시작해줌
+
 #### 새로운 엔티티를 구별하는 방법
 
 ### 나머지 기능들
