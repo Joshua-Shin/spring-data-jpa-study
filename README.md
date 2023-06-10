@@ -260,9 +260,22 @@ public Page<Member> list(Pageable pageable) {
   - 때문에 서비스 계층에 선언이 되어있으면 그걸 이어서 가고, 선언이 안되어있으면 리포지토리 계층에서 트랜잭션 시작해줌
 
 #### 새로운 엔티티를 구별하는 방법
+- save()를 호출시 pk 필드인 id 값을 @GeneratedValue 로 보통 생성하기 떄문에 id값이 null이냐 아니냐고 저장된 엔티티인가 아닌가를 판단함.
+- 새로운 엔티티면 persist 바로 하고, 아니면 merge가 호출됨.
+- 만약 id 값을 @GeneratedValue로 하지 않고 직접 생성자에 넣는 방식이면 새로운 엔티티 구별 방법은 이를 새로운 엔티티로 판단 못하고 merge를 호출하게됨.
+- merge 호출 하면 db에서 해당 id 값을 갖는 엔티티를 찾고, 없으면 다시 저장하는 과정을 거치게 되며, 이는 아무래도 성능상 손해가 발생.
+- 때문에 엔티티에 persistable 인터페이스를 구현해서 isNew() 메소드를 오버라이딩 시키면 해당 메소드를 기준으로 새로운 엔티티인가 아닌가를 판단함.
+- 보통 isNew() 엔티티는 createdDate가 null 이냐 아니냐를 두면 됨. createdDate 필드는 @CreatedDate 해주면 persist 되는 시점에 값이 들어오기때문에 적절함.
 
 ### 나머지 기능들
 #### Specifications (명세)
+- 실무에서 잘 안써
 #### Query By Example
+- 실무에서 잘 안써. QueryDsl 써.
 #### Projections
+- 실무에서 잘 안써. QueryDsl 써.
 #### 네이티브 쿼리
+- 최대한, 네이티브 쿼리는 사용 안하는편.
+- 네이티브 쿼리를 spring data jpa에 넣을때, 최근에 Projection을 반환타입으로 가져갈 수 있게 되면서, 활용도가 넓어지긴 했음. 근데 이게 최근(영상 기준)에 추가된거라, 아직 많이들 안쓰는듯.
+
+
